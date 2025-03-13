@@ -131,7 +131,7 @@
     <h1>DuckDB Snippets Search</h1>
     
     <div class="search-container">
-        <input type="text" id="search" placeholder="Search by keyword(s)">
+        <input type="text" id="search" placeholder="Search by keyword(s)" onkeydown="if(event.key==='Enter') searchSnippets()">
         <button onclick="searchSnippets()">Search</button>
         <button onclick="clearSearch()">Clear</button>
     </div>
