@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB Snippets Search</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    <style>
+        body {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .search-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .search-container input {
+            flex-grow: 1;
+            min-width: 250px;
+        }
+        
+        #loading {
+            display: none;
+            margin: 20px 0;
+        }
+        
+        .progress-container {
+            width: 100%;
+            background-color: #eee;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .progress-bar {
+            height: 20px;
+            background-color: #4299E1;
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .snippet {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        
+        .snippet h3 {
+            margin-top: 0;
+        }
+        
+        .snippet pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            max-height: 400px;
+        }
+        
+        .tag {
+            display: inline-block;
+            background-color: #e2e8f0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        
+        .tag.selected {
+            background-color: #4299E1;
+            color: white;
+        }
+        
+        .meta {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        #stats {
+            margin-bottom: 20px;
+            font-size: 16px;
+        }
+        
+        .filters {
+            margin-bottom: 20px;
+        }
+        
+        #tags-container {
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        
+        .copy-btn {
+            float: right;
+            padding: 5px 10px;
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .copy-btn:hover {
+            background-color: #e5e5e5;
+        }
+        
+        @media (max-width: 768px) {
+            .search-container {
+                flex-direction: column;
+            }
+            
+            .search-container input, 
+            .search-container button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>DuckDB Snippets Search</h1>
+    
+    <div class="search-container">
+        <input type="text" id="search" placeholder="Search by keyword(s)">
+        <button onclick="searchSnippets()">Search</button>
+        <button onclick="clearSearch()">Clear</button>
+    </div>
+    
+    <div class="filters">
+        <details>
+            <summary>Filter by Tags</summary>
+            <div id="tags-container"></div>
+        </details>
+    </div>
+    
+    <div id="stats"></div>
+
+    <div id="loading">
+        <p id="loading-text">Loading snippets...</p>
+        <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        // Configuration
+        // Replace this with your actual Supabase Edge Function URL
+        const PROXY_URL = 'https://nihgslsitmxrxljibnnm.supabase.co/functions/v1/fetch-duckdbsnippets';
+        const buildId = 'c6e446ooRSiDtyheLN4bL'; // This might change over time
+        const totalPages = 11; // Based on your mention of 11 pages
+        
+        // State variables
+        let allSnippets = [];
+        let loadedPages = 0;
+        let filteredSnippets = [];
+        let allTags = new Set();
+        let selectedTags = new Set();
+        
+        // Elements
+        const loadingElement = document.getElementById('loading');
+        const loadingTextElement = document.getElementById('loading-text');
+        const progressBarElement = document.getElementById('progress-bar');
+        const resultsElement = document.getElementById('results');
+        const statsElement = document.getElementById('stats');
+        const tagsContainerElement = document.getElementById('tags-container');
+        
+        // Initialize on page load
+        window.onload = fetchAllSnippets;
+        
+        async function fetchAllSnippets() {
+            showLoading(true);
+            updateProgress(0);
+            allSnippets = [];
+            loadedPages = 0;
+            
+            for (let page = 1; page <= totalPages; page++) {
+                try {
+                    await fetchSnippetsPage(page);
+                    updateProgress((loadedPages / totalPages) * 100);
+                } catch (error) {
+                    console.error(`Error fetching page ${page}:`, error);
+                }
+            }
+            
+            // Extract all unique tags
+            allSnippets.forEach(snippet => {
+                if (snippet.tags && Array.isArray(snippet.tags)) {
+                    snippet.tags.forEach(tag => allTags.add(tag));
+                }
+            });
+            
+            // Populate tags filter
+            populateTagsFilter();
+            
+            showLoading(false);
+            
+            // Initial display without filtering
+            filteredSnippets = [...allSnippets];
+            displaySnippets(filteredSnippets);
+        }
+
+        async function fetchSnippetsPage(page) {
+            const targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/page/${page}/most-recent.json?params=page&params=${page}&params=most-recent`;
+            const url = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
+            
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Extract snippets from the response
+                const pageSnippets = data.pageProps?.snippets || [];
+                allSnippets = [...allSnippets, ...pageSnippets];
+                
+                loadedPages++;
+                loadingTextElement.textContent = `Loading snippets... (${loadedPages}/${totalPages})`;
+                
+                return pageSnippets;
+            } catch (error) {
+                console.error(`Error fetching page ${page}:`, error);
+                throw error;
+            }
+        }
+
+        function populateTagsFilter() {
+            tagsContainerElement.innerHTML = '';
+            
+            // Sort tags alphabetically
+            const sortedTags = Array.from(allTags).sort();
+            
+            sortedTags.forEach(tag => {
+                const tagElement = document.createElement('span');
+                tagElement.className = 'tag';
+                tagElement.textContent = tag;
+                tagElement.onclick = () => toggleTagFilter(tag, tagElement);
+                tagsContainerElement.appendChild(tagElement);
+            });
+        }
+
+        function toggleTagFilter(tag, element) {
+            if (selectedTags.has(tag)) {
+                selectedTags.delete(tag);
+                element.classList.remove('selected');
+            } else {
+                selectedTags.add(tag);
+                element.classList.add('selected');
+            }
+            
+            // Re-apply filters
+            applyFilters();
+        }
+
+        function searchSnippets() {
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const searchTerm = document.getElementById('search').value.toLowerCase();
+            
+            filteredSnippets = allSnippets.filter(snippet => {
+                // Apply search term filter
+                let matchesSearch = true;
+                if (searchTerm.trim()) {
+                    const terms = searchTerm.split(' ').filter(term => term.length > 0);
+                    
+                    const title = snippet.title?.toLowerCase() || '';
+                    const content = snippet.content?.toLowerCase() || '';
+                    const tags = snippet.tags ? snippet.tags.join(' ').toLowerCase() : '';
+                    
+                    matchesSearch = terms.every(term => 
+                        title.includes(term) || 
+                        content.includes(term) || 
+                        tags.includes(term)
+                    );
+                }
+                
+                // Apply tags filter
+                let matchesTags = true;
+                if (selectedTags.size > 0) {
+                    matchesTags = selectedTags.size === 0 || 
+                        (snippet.tags && Array.from(selectedTags).every(tag => snippet.tags.includes(tag)));
+                }
+                
+                return matchesSearch && matchesTags;
+            });
+            
+            displaySnippets(filteredSnippets);
+        }
+
+        function clearSearch() {
+            document.getElementById('search').value = '';
+            
+            // Clear tag selections
+            selectedTags.clear();
+            document.querySelectorAll('#tags-container .tag').forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            filteredSnippets = [...allSnippets];
+            displaySnippets(filteredSnippets);
+        }
+
+        function displaySnippets(snippets) {
+            resultsElement.innerHTML = '';
+            
+            // Update stats
+            statsElement.textContent = `Showing ${snippets.length} of ${allSnippets.length} snippets`;
+            
+            if (snippets.length === 0) {
+                resultsElement.innerHTML = '<p>No snippets found. Try a different search term or tag filter.</p>';
+                return;
+            }
+            
+            snippets.forEach(snippet => {
+                const snippetDiv = document.createElement('div');
+                snippetDiv.className = 'snippet';
+                
+                // Format date
+                const dateStr = snippet.createdAt ? new Date(snippet.createdAt).toLocaleDateString() : 'Unknown date';
+                
+                // Tags
+                const tagsHtml = snippet.tags ? 
+                    snippet.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : '';
+                
+                // Add copy button to code
+                const copyBtnHtml = `<button class="copy-btn" onclick="copyToClipboard(this)">Copy</button>`;
+                
+                snippetDiv.innerHTML = `
+                    <h3>${snippet.title}</h3>
+                    <div class="meta">
+                        <span>Created: ${dateStr}</span>
+                        ${snippet.author ? ` by <strong>${snippet.author}</strong>` : ''}
+                    </div>
+                    <div>${tagsHtml}</div>
+                    <pre><code>${copyBtnHtml}${snippet.content}</code></pre>
+                `;
+                
+                resultsElement.appendChild(snippetDiv);
+            });
+        }
+
+        function copyToClipboard(button) {
+            const codeElement = button.nextSibling;
+            const textToCopy = codeElement.textContent;
+            
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                // Temporarily change button text
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Could not copy text: ', err);
+            });
+        }
+
+        function showLoading(show) {
+            loadingElement.style.display = show ? 'block' : 'none';
+        }
+
+        function updateProgress(percent) {
+            progressBarElement.style.width = `${percent}%`;
+        }
+    </script>
+</body>
+</html>
