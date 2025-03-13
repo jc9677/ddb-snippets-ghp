@@ -17,11 +17,29 @@
             gap: 10px;
             margin-bottom: 20px;
             flex-wrap: wrap;
+            width: 100%;
+            max-width: 800px; /* Match typical content width */
         }
         
         .search-container input {
             flex-grow: 1;
             min-width: 250px;
+            width: 100%;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+        }
+        
+        .button-row button {
+            flex: 1;
+        }
+        
+        .filters {
+            margin-bottom: 20px;
+            max-width: 800px; /* Match search container width */
         }
         
         #loading {
@@ -127,13 +145,13 @@
                 margin: 0;
             }
 
-            /* Create a row container just for the buttons */
-            .search-container .button-row {
+            .button-row {
                 display: flex;
                 gap: 10px;
+                width: 100%;
             }
 
-            .search-container button {
+            .button-row button {
                 flex: 1;
                 min-width: 0;
                 padding: 8px;
