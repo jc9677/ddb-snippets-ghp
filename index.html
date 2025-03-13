@@ -157,8 +157,8 @@
     <script>
         // Configuration
         // Replace this with your actual Supabase Edge Function URL
-        const PROXY_URL = 'https://nihgslsitmxrxljibnnm.supabase.co/functions/v1/fetch-duckdbsnippets';
-        const buildId = 'c6e446ooRSiDtyheLN4bL'; // This might change over time
+        const PROXY_URL = 'https://your-project-ref.supabase.co/functions/v1/proxy-duckdb-snippets';
+        let buildId = ''; // Will be detected dynamically
         const totalPages = 11; // Based on your mention of 11 pages
         
         // State variables
@@ -177,24 +177,270 @@
         const tagsContainerElement = document.getElementById('tags-container');
         
         // Initialize on page load
-        window.onload = fetchAllSnippets;
+        window.onload = initializeApp;
         
-        async function fetchAllSnippets() {
+        async function initializeApp() {
             showLoading(true);
+            loadingTextElement.textContent = "Detecting current site version...";
+            
+            try {
+                // First, detect the current buildId
+                await detectBuildId();
+                
+                if (!buildId) {
+                    throw new Error("Could not detect the site version (buildId)");
+                }
+                
+                // Then fetch all snippets
+                await fetchAllSnippets();
+                
+                // If we couldn't get any snippets, fall back to scraping
+                if (allSnippets.length === 0) {
+                    loadingTextElement.textContent = "Trying alternative method to load snippets...";
+                    await fetchSnippetsByDirectScraping();
+                }
+            } catch (error) {
+                console.error("Initialization error:", error);
+                loadingElement.style.display = 'block';
+                loadingTextElement.textContent = "Error: " + error.message;
+                progressBarElement.style.backgroundColor = "#e53e3e";
+                
+                // Try direct scraping as a last resort
+                try {
+                    loadingTextElement.textContent = "Trying alternative method to load snippets...";
+                    await fetchSnippetsByDirectScraping();
+                } catch (scrapeError) {
+                    console.error("Direct scraping also failed:", scrapeError);
+                    loadingTextElement.textContent = "Could not load snippets. Please try again later.";
+                }
+            }
+        }
+        
+        async function fetchSnippetsByDirectScraping() {
             updateProgress(0);
             allSnippets = [];
             loadedPages = 0;
             
             for (let page = 1; page <= totalPages; page++) {
                 try {
-                    await fetchSnippetsPage(page);
+                    const pageUrl = `https://duckdbsnippets.com/page/${page}/most-recent`;
+                    const url = `${PROXY_URL}?url=${encodeURIComponent(pageUrl)}`;
+                    
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const html = await response.text();
+                    
+                    // Parse HTML to extract snippets
+                    const pageSnippets = parseSnippetsFromHTML(html);
+                    
+                    if (pageSnippets.length > 0) {
+                        allSnippets = [...allSnippets, ...pageSnippets];
+                        console.log(`Scraped ${pageSnippets.length} snippets from page ${page}`);
+                    } else {
+                        console.warn(`No snippets found on page ${page}`);
+                    }
+                    
+                    loadedPages++;
                     updateProgress((loadedPages / totalPages) * 100);
+                    loadingTextElement.textContent = `Loading snippets... (${loadedPages}/${totalPages})`;
                 } catch (error) {
-                    console.error(`Error fetching page ${page}:`, error);
+                    console.error(`Error scraping page ${page}:`, error);
                 }
             }
             
+            if (allSnippets.length === 0) {
+                throw new Error("Could not find any snippets through direct scraping");
+            }
+            
             // Extract all unique tags
+            allTags = new Set();
+            allSnippets.forEach(snippet => {
+                if (snippet.tags && Array.isArray(snippet.tags)) {
+                    snippet.tags.forEach(tag => allTags.add(tag));
+                }
+            });
+            
+            // Populate tags filter
+            populateTagsFilter();
+            
+            showLoading(false);
+            
+            // Initial display without filtering
+            filteredSnippets = [...allSnippets];
+            displaySnippets(filteredSnippets);
+        }
+        
+        function parseSnippetsFromHTML(html) {
+            const snippets = [];
+            
+            // Create a temporary DOM element to parse the HTML
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            // Find all snippet containers
+            const snippetElements = doc.querySelectorAll('.snippet, [class*="snippet"], [id*="snippet"], pre, code');
+            
+            snippetElements.forEach((element, index) => {
+                try {
+                    // Try to extract title, content, tags, etc.
+                    const titleElement = element.querySelector('h2, h3, h4, .title, [class*="title"]');
+                    const title = titleElement ? titleElement.textContent.trim() : `Snippet ${index + 1}`;
+                    
+                    // Try to get content from different potential elements
+                    let content = '';
+                    const codeElement = element.querySelector('pre, code, .code, [class*="code"]');
+                    if (codeElement) {
+                        content = codeElement.textContent.trim();
+                    } else {
+                        content = element.textContent.trim();
+                    }
+                    
+                    // Try to extract tags
+                    const tagElements = element.querySelectorAll('.tag, [class*="tag"]');
+                    const tags = Array.from(tagElements).map(tag => tag.textContent.trim());
+                    
+                    // Try to extract author and date
+                    const metaElement = element.querySelector('.meta, [class*="meta"], .info, [class*="info"]');
+                    let author = '';
+                    let createdAt = '';
+                    
+                    if (metaElement) {
+                        const authorElement = metaElement.querySelector('[class*="author"]');
+                        if (authorElement) {
+                            author = authorElement.textContent.trim();
+                        }
+                        
+                        const dateElement = metaElement.querySelector('[class*="date"], [datetime]');
+                        if (dateElement) {
+                            createdAt = dateElement.getAttribute('datetime') || dateElement.textContent.trim();
+                        }
+                    }
+                    
+                    snippets.push({
+                        title,
+                        content,
+                        tags,
+                        author,
+                        createdAt
+                    });
+                } catch (error) {
+                    console.error('Error parsing snippet:', error);
+                }
+            });
+            
+            return snippets;
+        }
+        
+        async function detectBuildId() {
+            try {
+                // First try to get the buildId from the homepage
+                const homePageUrl = "https://duckdbsnippets.com";
+                const response = await fetch(`${PROXY_URL}?url=${encodeURIComponent(homePageUrl)}`);
+                const html = await response.text();
+                
+                // Look for the buildId in the HTML
+                // This pattern searches for the buildId in the Next.js script tags
+                const buildIdRegex = /"buildId":"([^"]+)"/;
+                const match = html.match(buildIdRegex);
+                
+                if (match && match[1]) {
+                    buildId = match[1];
+                    console.log("Detected buildId:", buildId);
+                    return;
+                }
+                
+                // If not found, try an alternative approach - get it from a known page's URL
+                const pageUrl = "https://duckdbsnippets.com/page/1/most-recent";
+                const pageResponse = await fetch(`${PROXY_URL}?url=${encodeURIComponent(pageUrl)}`);
+                const pageHtml = await pageResponse.text();
+                
+                // Look for URLs that contain the buildId
+                const urlRegex = /\/_next\/data\/([^\/]+)\/page\/1\/most-recent\.json/;
+                const urlMatch = pageHtml.match(urlRegex);
+                
+                if (urlMatch && urlMatch[1]) {
+                    buildId = urlMatch[1];
+                    console.log("Detected buildId from URL:", buildId);
+                    return;
+                }
+                
+                // Final fallback - try to find any content that looks like a buildId
+                const generalBuildIdRegex = /\/_next\/data\/([A-Za-z0-9_-]{8,})\//;
+                const generalMatch = pageHtml.match(generalBuildIdRegex);
+                
+                if (generalMatch && generalMatch[1]) {
+                    buildId = generalMatch[1];
+                    console.log("Detected buildId using fallback method:", buildId);
+                    return;
+                }
+                
+                // Last resort - hardcoded value
+                buildId = 'c6e446ooRSiDtyheLN4bL';
+                console.warn("Using hardcoded buildId as fallback. This may not work if the site has been updated.");
+                return;
+            } catch (error) {
+                console.error("Error detecting buildId:", error);
+                
+                // Last resort - hardcoded value
+                buildId = 'c6e446ooRSiDtyheLN4bL';
+                console.warn("Using hardcoded buildId as fallback after error. This may not work if the site has been updated.");
+            }
+        }
+        
+        async function fetchAllSnippets() {
+            updateProgress(0);
+            allSnippets = [];
+            loadedPages = 0;
+            let fetchSuccess = false;
+            
+            // First try page 1 to see if we can get the data structure
+            try {
+                const page1Snippets = await fetchSnippetsPage(1);
+                if (page1Snippets && page1Snippets.length > 0) {
+                    fetchSuccess = true;
+                    updateProgress((1 / totalPages) * 100);
+                    
+                    // Continue with other pages
+                    for (let page = 2; page <= totalPages; page++) {
+                        try {
+                            await fetchSnippetsPage(page);
+                        } catch (error) {
+                            console.error(`Error fetching page ${page}:`, error);
+                            // Continue with other pages even if one fails
+                        }
+                        updateProgress((loadedPages / totalPages) * 100);
+                    }
+                } else {
+                    throw new Error("Could not retrieve snippets from page 1");
+                }
+            } catch (error) {
+                console.error("Error starting snippet fetch:", error);
+                loadingTextElement.textContent = `Error: ${error.message}. Check console for details.`;
+                progressBarElement.style.backgroundColor = "#e53e3e";
+                // Wait 5 seconds then hide the error
+                setTimeout(() => {
+                    showLoading(false);
+                }, 5000);
+                return;
+            }
+            
+            if (allSnippets.length === 0) {
+                loadingTextElement.textContent = "Error: Could not find any snippets. The site structure may have changed.";
+                progressBarElement.style.backgroundColor = "#e53e3e";
+                // Wait 5 seconds then hide the error
+                setTimeout(() => {
+                    showLoading(false);
+                }, 5000);
+                return;
+            }
+            
+            console.log(`Successfully loaded ${allSnippets.length} total snippets.`);
+            
+            // Extract all unique tags
+            allTags = new Set();
             allSnippets.forEach(snippet => {
                 if (snippet.tags && Array.isArray(snippet.tags)) {
                     snippet.tags.forEach(tag => allTags.add(tag));
@@ -223,9 +469,54 @@
                 
                 const data = await response.json();
                 
-                // Extract snippets from the response
-                const pageSnippets = data.pageProps?.snippets || [];
-                allSnippets = [...allSnippets, ...pageSnippets];
+                // Debug logging to see the actual response structure
+                console.log(`Page ${page} response structure:`, JSON.stringify(data).slice(0, 500) + '...');
+                
+                // Extract snippets from the response - handle different potential structures
+                let pageSnippets = [];
+                
+                if (data.pageProps?.snippets) {
+                    // If snippets are directly in pageProps
+                    pageSnippets = data.pageProps.snippets;
+                } else if (data.pageProps?.data?.snippets) {
+                    // If snippets are nested in data
+                    pageSnippets = data.pageProps.data.snippets;
+                } else if (Array.isArray(data.pageProps)) {
+                    // If pageProps itself is an array
+                    pageSnippets = data.pageProps;
+                } else if (Array.isArray(data)) {
+                    // If data itself is an array
+                    pageSnippets = data;
+                } else {
+                    // Last resort: look for any array in the response
+                    for (const key in data) {
+                        if (Array.isArray(data[key])) {
+                            pageSnippets = data[key];
+                            break;
+                        }
+                        
+                        if (data[key] && typeof data[key] === 'object') {
+                            for (const nestedKey in data[key]) {
+                                if (Array.isArray(data[key][nestedKey])) {
+                                    pageSnippets = data[key][nestedKey];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (!Array.isArray(pageSnippets)) {
+                    console.error(`Could not find snippets array in page ${page} response`, data);
+                    pageSnippets = [];
+                }
+                
+                console.log(`Found ${pageSnippets.length} snippets on page ${page}`);
+                
+                // Add to our collection
+                if (pageSnippets.length > 0) {
+                    allSnippets = [...allSnippets, ...pageSnippets];
+                }
                 
                 loadedPages++;
                 loadingTextElement.textContent = `Loading snippets... (${loadedPages}/${totalPages})`;
