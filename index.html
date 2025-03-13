@@ -583,7 +583,7 @@
                     const terms = searchTerm.split(' ').filter(term => term.length > 0);
                     
                     const title = snippet.title?.toLowerCase() || '';
-                    const content = snippet.content?.toLowerCase() || '';
+                    const content = (snippet.code || snippet.content || '').toLowerCase();
                     const tags = snippet.tags ? snippet.tags.join(' ').toLowerCase() : '';
                     
                     matchesSearch = terms.every(term => 
