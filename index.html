@@ -637,6 +637,10 @@
                 // Format date
                 const dateStr = snippet.createdAt ? new Date(snippet.createdAt).toLocaleDateString() : 'Unknown date';
                 
+                // Generate URL slug from title
+                const slug = snippet.title ? generateSlug(snippet.title) : '';
+                const sourceUrl = `https://duckdbsnippets.com/snippet/${snippet.id}/${slug}`;
+                
                 // Tags
                 const tagsHtml = snippet.tags ? 
                     snippet.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : '';
@@ -652,6 +656,7 @@
                     <div class="meta">
                         <span>Created: ${dateStr}</span>
                         ${snippet.author ? ` by <strong>${snippet.author}</strong>` : ''}
+                        <span> | <a href="${sourceUrl}" target="_blank">View original</a></span>
                     </div>
                     <div>${tagsHtml}</div>
                     <pre><code>${copyBtnHtml}${codeContent}</code></pre>
@@ -659,6 +664,16 @@
                 
                 resultsElement.appendChild(snippetDiv);
             });
+        }
+
+        // Helper function to generate URL slugs from titles
+        function generateSlug(title) {
+            return title
+                .toLowerCase()
+                .replace(/[^\w\s-]/g, '') // Remove special characters
+                .replace(/\s+/g, '-')     // Replace spaces with hyphens
+                .replace(/-+/g, '-')      // Replace multiple hyphens with single one
+                .trim();
         }
 
         function copyToClipboard(button) {
