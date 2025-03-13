@@ -338,12 +338,18 @@
             // Construct the appropriate URL based on whether this is a search or not
             let targetUrl;
             if (searchTerm) {
-                targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/search.json?q=${encodeURIComponent(searchTerm)}`;
+                // Modified search URL construction to match the format expected by the site
+                // Use /search.json format and properly encode the query parameter
+                targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/search.json`;
+                // Add search query parameter properly
+                targetUrl += `?q=${encodeURIComponent(searchTerm)}`;
             } else {
                 targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/page/${page}/most-recent.json?params=page&params=${page}&params=most-recent`;
             }
             
             const url = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
+            
+            console.log("Requesting URL:", url);
             
             try {
                 const response = await fetch(url);
