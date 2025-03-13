@@ -1,4 +1,4 @@
-// This file simulates curl requests to test our endpoint paths
+ // This file simulates curl requests to test our endpoint paths
 
 // Simulated functions to represent curl responses
 async function testMostRecentEndpoint() {
