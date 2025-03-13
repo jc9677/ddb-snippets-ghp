@@ -644,6 +644,9 @@
                 // Add copy button to code
                 const copyBtnHtml = `<button class="copy-btn" onclick="copyToClipboard(this)">Copy</button>`;
                 
+                // Get code content - check multiple possible property names
+                const codeContent = snippet.code || snippet.content || '';
+                
                 snippetDiv.innerHTML = `
                     <h3>${snippet.title}</h3>
                     <div class="meta">
@@ -651,7 +654,7 @@
                         ${snippet.author ? ` by <strong>${snippet.author}</strong>` : ''}
                     </div>
                     <div>${tagsHtml}</div>
-                    <pre><code>${copyBtnHtml}${snippet.content}</code></pre>
+                    <pre><code>${copyBtnHtml}${codeContent}</code></pre>
                 `;
                 
                 resultsElement.appendChild(snippetDiv);
