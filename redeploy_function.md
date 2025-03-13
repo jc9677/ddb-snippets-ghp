@@ -1,0 +1,1 @@
+npx supabase functions deploy proxy-duckdb-snippets --no-verify-jwt
