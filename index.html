@@ -475,9 +475,12 @@
                 // Extract snippets from the response - handle different potential structures
                 let pageSnippets = [];
                 
-                if (data.pageProps?.snippets) {
-                    // If snippets are directly in pageProps
-                    pageSnippets = data.pageProps.snippets;
+                if (data.pageProps?.snippets?.data && Array.isArray(data.pageProps.snippets.data)) {
+                    // This is the correct path based on the actual structure
+                    pageSnippets = data.pageProps.snippets.data;
+                } else if (data.pageProps?.snippets) {
+                    // If snippets are directly in pageProps.snippets and it's an array
+                    pageSnippets = Array.isArray(data.pageProps.snippets) ? data.pageProps.snippets : [];
                 } else if (data.pageProps?.data?.snippets) {
                     // If snippets are nested in data
                     pageSnippets = data.pageProps.data.snippets;
@@ -500,6 +503,16 @@
                                 if (Array.isArray(data[key][nestedKey])) {
                                     pageSnippets = data[key][nestedKey];
                                     break;
+                                }
+                                
+                                // Add one more level of nesting check
+                                if (data[key][nestedKey] && typeof data[key][nestedKey] === 'object') {
+                                    for (const deepNestedKey in data[key][nestedKey]) {
+                                        if (Array.isArray(data[key][nestedKey][deepNestedKey])) {
+                                            pageSnippets = data[key][nestedKey][deepNestedKey];
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
