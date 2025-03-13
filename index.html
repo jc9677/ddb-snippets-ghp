@@ -117,12 +117,26 @@
         
         @media (max-width: 768px) {
             .search-container {
+                display: flex;
                 flex-direction: column;
+                gap: 10px;
             }
             
-            .search-container input, 
-            .search-container button {
+            .search-container input {
                 width: 100%;
+                margin: 0;
+            }
+
+            /* Create a row container just for the buttons */
+            .search-container .button-row {
+                display: flex;
+                gap: 10px;
+            }
+
+            .search-container button {
+                flex: 1;
+                min-width: 0;
+                padding: 8px;
             }
         }
     </style>
@@ -132,8 +146,10 @@
     
     <div class="search-container">
         <input type="text" id="search" placeholder="Search by keyword(s)" onkeydown="if(event.key==='Enter') searchSnippets()">
-        <button onclick="searchSnippets()">Search</button>
-        <button onclick="clearSearch()">Clear</button>
+        <div class="button-row">
+            <button onclick="searchSnippets()">Search</button>
+            <button onclick="clearSearch()">Clear</button>
+        </div>
     </div>
     
     <div class="filters">
