@@ -335,50 +335,95 @@
         }
         
         async function fetchSnippetsPage(page, searchTerm) {
-            // Construct the appropriate URL based on whether this is a search or not
             let targetUrl;
+            
             if (searchTerm) {
-                // Modified search URL construction to match the format expected by the site
-                // Use /search.json format and properly encode the query parameter
-                targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/search.json`;
-                // Add search query parameter properly
-                targetUrl += `?q=${encodeURIComponent(searchTerm)}`;
+                // For search, we'll try the homepage with query param approach
+                // This is more reliable than trying to use the Next.js data API
+                targetUrl = `https://duckdbsnippets.com/search?q=${encodeURIComponent(searchTerm)}`;
             } else {
+                // For regular page loading, we'll use the Next.js data API
                 targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/page/${page}/most-recent.json?params=page&params=${page}&params=most-recent`;
             }
             
-            const url = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
-            
-            console.log("Requesting URL:", url);
+            console.log("Requesting URL:", targetUrl);
             
             try {
+                const url = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(url);
+                
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
-                const data = await response.json();
+                let data;
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    // If we get HTML (likely for search page), we need to extract snippet data from the HTML
+                    const html = await response.text();
+                    
+                    // Try to extract the initial props from the HTML
+                    // This is how Next.js embeds data in the initial page load
+                    const dataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s);
+                    
+                    if (dataMatch && dataMatch[1]) {
+                        try {
+                            const nextData = JSON.parse(dataMatch[1]);
+                            
+                            // Extract snippets from the Next.js data structure
+                            if (searchTerm && 
+                                nextData.props && 
+                                nextData.props.pageProps && 
+                                nextData.props.pageProps.searchResults && 
+                                nextData.props.pageProps.searchResults.data) {
+                                data = { pageProps: { searchResults: nextData.props.pageProps.searchResults } };
+                                console.log("Successfully extracted search results from HTML");
+                            } else if (!searchTerm && 
+                                     nextData.props && 
+                                     nextData.props.pageProps && 
+                                     nextData.props.pageProps.snippets) {
+                                data = { pageProps: { snippets: nextData.props.pageProps.snippets } };
+                            } else {
+                                console.error("Could not find expected data structure in HTML response");
+                            }
+                            
+                            if (!buildId && nextData.buildId) {
+                                buildId = nextData.buildId;
+                                console.log("Updated buildId from HTML response:", buildId);
+                            }
+                        } catch (e) {
+                            console.error("Error parsing Next.js data from HTML:", e);
+                        }
+                    }
+                    
+                    if (!data) {
+                        throw new Error("Could not extract snippet data from HTML response");
+                    }
+                }
                 
                 // Debug logging
                 console.log(`Response from ${searchTerm ? 'search' : 'most-recent'} endpoint:`, 
-                            JSON.stringify(data).slice(0, 300) + '...');
+                           JSON.stringify(data).slice(0, 300) + '...');
                 
                 // Extract snippets based on verified paths from our tests
                 let pageSnippets = [];
                 
                 if (searchTerm && data.pageProps?.searchResults?.data && Array.isArray(data.pageProps.searchResults.data)) {
-                    // Path for search results - confirmed by our tests
+                    // Path for search results
                     pageSnippets = data.pageProps.searchResults.data;
                     console.log(`Found ${pageSnippets.length} search results for "${searchTerm}"`);
                 } else if (!searchTerm && data.pageProps?.snippets?.data && Array.isArray(data.pageProps.snippets.data)) {
-                    // Path for most-recent snippets - confirmed by our tests
+                    // Path for most-recent snippets
                     pageSnippets = data.pageProps.snippets.data;
                     console.log(`Found ${pageSnippets.length} snippets on page ${page}`);
                 } else {
                     // Handle edge cases or API changes
                     console.warn("Expected data structure not found, trying fallback paths");
                     
-                    // Fallback options
+                    // Try various fallback options to find snippets data
                     if (data.pageProps?.snippets && Array.isArray(data.pageProps.snippets)) {
                         pageSnippets = data.pageProps.snippets;
                     } else if (data.pageProps?.searchResults && Array.isArray(data.pageProps.searchResults)) {
