@@ -180,7 +180,7 @@
         
         async function initializeApp() {
             showLoading(true);
-            loadingTextElement.textContent = "Detecting current site version...";
+            loadingTextElement.textContent = "Initializing application...";
             
             try {
                 // First, detect the current buildId
@@ -190,8 +190,13 @@
                     throw new Error("Could not detect the site version (buildId)");
                 }
                 
-                // Fetch initial snippets to populate tags
-                await fetchInitialSnippets();
+                // Initialize the UI without loading initial snippets
+                allSnippets = [];
+                filteredSnippets = [];
+                
+                // Show empty state with instructions
+                resultsElement.innerHTML = '<div class="empty-state"><p>Enter a keyword above to search for DuckDB snippets.</p></div>';
+                statsElement.textContent = 'Ready to search';
                 
                 isInitialized = true;
                 showLoading(false);
@@ -200,49 +205,10 @@
                 loadingElement.style.display = 'block';
                 loadingTextElement.textContent = "Error: " + error.message;
                 progressBarElement.style.backgroundColor = "#e53e3e";
-                
-                // Try direct scraping as a last resort
-                try {
-                    loadingTextElement.textContent = "Trying alternative method to initialize...";
-                    await fetchSnippetsByDirectScraping();
-                    isInitialized = true;
-                } catch (scrapeError) {
-                    console.error("Direct scraping also failed:", scrapeError);
-                    loadingTextElement.textContent = "Could not initialize. Please try again later.";
-                }
             }
         }
         
-        async function fetchInitialSnippets() {
-            showLoading(true);
-            loadingTextElement.textContent = "Loading initial data...";
-            
-            // Just fetch the first page to get tags
-            try {
-                const firstPageSnippets = await fetchSnippetsPage(1, "");
-                
-                // Extract all unique tags
-                allTags = new Set();
-                firstPageSnippets.forEach(snippet => {
-                    if (snippet.tags && Array.isArray(snippet.tags)) {
-                        snippet.tags.forEach(tag => allTags.add(tag));
-                    }
-                });
-                
-                // Populate tags filter
-                populateTagsFilter();
-                
-                // Display initial snippets
-                allSnippets = firstPageSnippets;
-                filteredSnippets = [...firstPageSnippets];
-                displaySnippets(filteredSnippets);
-                
-                showLoading(false);
-            } catch (error) {
-                console.error("Error fetching initial snippets:", error);
-                throw error;
-            }
-        }
+        // Removed fetchInitialSnippets function as we don't need it anymore
         
         async function detectBuildId() {
             try {
@@ -308,9 +274,10 @@
             
             const searchTerm = document.getElementById('search').value.trim();
             
-            if (!searchTerm && selectedTags.size === 0) {
-                // No search criteria, fetch most recent
-                await fetchInitialSnippets();
+            if (!searchTerm) {
+                // No search term provided
+                resultsElement.innerHTML = '<div class="empty-state"><p>Enter a keyword to search for DuckDB snippets.</p></div>';
+                statsElement.textContent = 'Ready to search';
                 return;
             }
             
@@ -546,8 +513,11 @@
                 el.classList.remove('selected');
             });
             
-            // Go back to initial state
-            fetchInitialSnippets();
+            // Reset to empty state
+            allSnippets = [];
+            filteredSnippets = [];
+            resultsElement.innerHTML = '<div class="empty-state"><p>Enter a keyword above to search for DuckDB snippets.</p></div>';
+            statsElement.textContent = 'Ready to search';
         }
 
         function displaySnippets(snippets) {
