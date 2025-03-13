@@ -479,7 +479,7 @@
                     id: snippet.id,
                     title: snippet.title,
                     code: snippet.code,
-                    createdAt: new Date().toISOString(), // Since we might not have this data
+                    createdAt: snippet.createdAt || new Date().toISOString(), // Use createdAt from JSON data if provided
                     author: snippet.author,
                     status: "approved", // Our proxy already filters for approved snippets
                     tags: [], // We might not have tags in the API response
