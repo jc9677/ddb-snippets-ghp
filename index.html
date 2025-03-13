@@ -159,14 +159,13 @@
         // Replace this with your actual Supabase Edge Function URL
         const PROXY_URL = 'https://nihgslsitmxrxljibnnm.supabase.co/functions/v1/proxy-duckdb-snippets';
         let buildId = ''; // Will be detected dynamically
-        const totalPages = 11; // Based on your mention of 11 pages
         
         // State variables
         let allSnippets = [];
-        let loadedPages = 0;
         let filteredSnippets = [];
         let allTags = new Set();
         let selectedTags = new Set();
+        let isInitialized = false;
         
         // Elements
         const loadingElement = document.getElementById('loading');
@@ -191,14 +190,11 @@
                     throw new Error("Could not detect the site version (buildId)");
                 }
                 
-                // Then fetch all snippets
-                await fetchAllSnippets();
+                // Fetch initial snippets to populate tags
+                await fetchInitialSnippets();
                 
-                // If we couldn't get any snippets, fall back to scraping
-                if (allSnippets.length === 0) {
-                    loadingTextElement.textContent = "Trying alternative method to load snippets...";
-                    await fetchSnippetsByDirectScraping();
-                }
+                isInitialized = true;
+                showLoading(false);
             } catch (error) {
                 console.error("Initialization error:", error);
                 loadingElement.style.display = 'block';
@@ -207,131 +203,45 @@
                 
                 // Try direct scraping as a last resort
                 try {
-                    loadingTextElement.textContent = "Trying alternative method to load snippets...";
+                    loadingTextElement.textContent = "Trying alternative method to initialize...";
                     await fetchSnippetsByDirectScraping();
+                    isInitialized = true;
                 } catch (scrapeError) {
                     console.error("Direct scraping also failed:", scrapeError);
-                    loadingTextElement.textContent = "Could not load snippets. Please try again later.";
+                    loadingTextElement.textContent = "Could not initialize. Please try again later.";
                 }
             }
         }
         
-        async function fetchSnippetsByDirectScraping() {
-            updateProgress(0);
-            allSnippets = [];
-            loadedPages = 0;
+        async function fetchInitialSnippets() {
+            showLoading(true);
+            loadingTextElement.textContent = "Loading initial data...";
             
-            for (let page = 1; page <= totalPages; page++) {
-                try {
-                    const pageUrl = `https://duckdbsnippets.com/page/${page}/most-recent`;
-                    const url = `${PROXY_URL}?url=${encodeURIComponent(pageUrl)}`;
-                    
-                    const response = await fetch(url);
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+            // Just fetch the first page to get tags
+            try {
+                const firstPageSnippets = await fetchSnippetsPage(1, "");
+                
+                // Extract all unique tags
+                allTags = new Set();
+                firstPageSnippets.forEach(snippet => {
+                    if (snippet.tags && Array.isArray(snippet.tags)) {
+                        snippet.tags.forEach(tag => allTags.add(tag));
                     }
-                    
-                    const html = await response.text();
-                    
-                    // Parse HTML to extract snippets
-                    const pageSnippets = parseSnippetsFromHTML(html);
-                    
-                    if (pageSnippets.length > 0) {
-                        allSnippets = [...allSnippets, ...pageSnippets];
-                        console.log(`Scraped ${pageSnippets.length} snippets from page ${page}`);
-                    } else {
-                        console.warn(`No snippets found on page ${page}`);
-                    }
-                    
-                    loadedPages++;
-                    updateProgress((loadedPages / totalPages) * 100);
-                    loadingTextElement.textContent = `Loading snippets... (${loadedPages}/${totalPages})`;
-                } catch (error) {
-                    console.error(`Error scraping page ${page}:`, error);
-                }
+                });
+                
+                // Populate tags filter
+                populateTagsFilter();
+                
+                // Display initial snippets
+                allSnippets = firstPageSnippets;
+                filteredSnippets = [...firstPageSnippets];
+                displaySnippets(filteredSnippets);
+                
+                showLoading(false);
+            } catch (error) {
+                console.error("Error fetching initial snippets:", error);
+                throw error;
             }
-            
-            if (allSnippets.length === 0) {
-                throw new Error("Could not find any snippets through direct scraping");
-            }
-            
-            // Extract all unique tags
-            allTags = new Set();
-            allSnippets.forEach(snippet => {
-                if (snippet.tags && Array.isArray(snippet.tags)) {
-                    snippet.tags.forEach(tag => allTags.add(tag));
-                }
-            });
-            
-            // Populate tags filter
-            populateTagsFilter();
-            
-            showLoading(false);
-            
-            // Initial display without filtering
-            filteredSnippets = [...allSnippets];
-            displaySnippets(filteredSnippets);
-        }
-        
-        function parseSnippetsFromHTML(html) {
-            const snippets = [];
-            
-            // Create a temporary DOM element to parse the HTML
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            
-            // Find all snippet containers
-            const snippetElements = doc.querySelectorAll('.snippet, [class*="snippet"], [id*="snippet"], pre, code');
-            
-            snippetElements.forEach((element, index) => {
-                try {
-                    // Try to extract title, content, tags, etc.
-                    const titleElement = element.querySelector('h2, h3, h4, .title, [class*="title"]');
-                    const title = titleElement ? titleElement.textContent.trim() : `Snippet ${index + 1}`;
-                    
-                    // Try to get content from different potential elements
-                    let content = '';
-                    const codeElement = element.querySelector('pre, code, .code, [class*="code"]');
-                    if (codeElement) {
-                        content = codeElement.textContent.trim();
-                    } else {
-                        content = element.textContent.trim();
-                    }
-                    
-                    // Try to extract tags
-                    const tagElements = element.querySelectorAll('.tag, [class*="tag"]');
-                    const tags = Array.from(tagElements).map(tag => tag.textContent.trim());
-                    
-                    // Try to extract author and date
-                    const metaElement = element.querySelector('.meta, [class*="meta"], .info, [class*="info"]');
-                    let author = '';
-                    let createdAt = '';
-                    
-                    if (metaElement) {
-                        const authorElement = metaElement.querySelector('[class*="author"]');
-                        if (authorElement) {
-                            author = authorElement.textContent.trim();
-                        }
-                        
-                        const dateElement = metaElement.querySelector('[class*="date"], [datetime]');
-                        if (dateElement) {
-                            createdAt = dateElement.getAttribute('datetime') || dateElement.textContent.trim();
-                        }
-                    }
-                    
-                    snippets.push({
-                        title,
-                        content,
-                        tags,
-                        author,
-                        createdAt
-                    });
-                } catch (error) {
-                    console.error('Error parsing snippet:', error);
-                }
-            });
-            
-            return snippets;
         }
         
         async function detectBuildId() {
@@ -390,75 +300,49 @@
             }
         }
         
-        async function fetchAllSnippets() {
-            updateProgress(0);
-            allSnippets = [];
-            loadedPages = 0;
-            let fetchSuccess = false;
+        async function searchSnippets() {
+            if (!isInitialized) {
+                alert("Application is still initializing. Please try again in a moment.");
+                return;
+            }
             
-            // First try page 1 to see if we can get the data structure
+            const searchTerm = document.getElementById('search').value.trim();
+            
+            if (!searchTerm && selectedTags.size === 0) {
+                // No search criteria, fetch most recent
+                await fetchInitialSnippets();
+                return;
+            }
+            
+            showLoading(true);
+            loadingTextElement.textContent = "Searching for snippets...";
+            
             try {
-                const page1Snippets = await fetchSnippetsPage(1);
-                if (page1Snippets && page1Snippets.length > 0) {
-                    fetchSuccess = true;
-                    updateProgress((1 / totalPages) * 100);
-                    
-                    // Continue with other pages
-                    for (let page = 2; page <= totalPages; page++) {
-                        try {
-                            await fetchSnippetsPage(page);
-                        } catch (error) {
-                            console.error(`Error fetching page ${page}:`, error);
-                            // Continue with other pages even if one fails
-                        }
-                        updateProgress((loadedPages / totalPages) * 100);
-                    }
-                } else {
-                    throw new Error("Could not retrieve snippets from page 1");
-                }
+                const results = await fetchSnippetsPage(1, searchTerm);
+                allSnippets = results;
+                
+                // Apply tag filters if any are selected
+                applyTagFilters();
+                
+                showLoading(false);
             } catch (error) {
-                console.error("Error starting snippet fetch:", error);
-                loadingTextElement.textContent = `Error: ${error.message}. Check console for details.`;
+                console.error("Search error:", error);
+                loadingElement.style.display = 'block';
+                loadingTextElement.textContent = "Error: " + error.message;
                 progressBarElement.style.backgroundColor = "#e53e3e";
-                // Wait 5 seconds then hide the error
-                setTimeout(() => {
-                    showLoading(false);
-                }, 5000);
-                return;
+                showLoading(false);
             }
-            
-            if (allSnippets.length === 0) {
-                loadingTextElement.textContent = "Error: Could not find any snippets. The site structure may have changed.";
-                progressBarElement.style.backgroundColor = "#e53e3e";
-                // Wait 5 seconds then hide the error
-                setTimeout(() => {
-                    showLoading(false);
-                }, 5000);
-                return;
-            }
-            
-            console.log(`Successfully loaded ${allSnippets.length} total snippets.`);
-            
-            // Extract all unique tags
-            allTags = new Set();
-            allSnippets.forEach(snippet => {
-                if (snippet.tags && Array.isArray(snippet.tags)) {
-                    snippet.tags.forEach(tag => allTags.add(tag));
-                }
-            });
-            
-            // Populate tags filter
-            populateTagsFilter();
-            
-            showLoading(false);
-            
-            // Initial display without filtering
-            filteredSnippets = [...allSnippets];
-            displaySnippets(filteredSnippets);
         }
-
-        async function fetchSnippetsPage(page) {
-            const targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/page/${page}/most-recent.json?params=page&params=${page}&params=most-recent`;
+        
+        async function fetchSnippetsPage(page, searchTerm) {
+            // Construct the appropriate URL based on whether this is a search or not
+            let targetUrl;
+            if (searchTerm) {
+                targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/search.json?q=${encodeURIComponent(searchTerm)}`;
+            } else {
+                targetUrl = `https://duckdbsnippets.com/_next/data/${buildId}/page/${page}/most-recent.json?params=page&params=${page}&params=most-recent`;
+            }
+            
             const url = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
             
             try {
@@ -469,76 +353,78 @@
                 
                 const data = await response.json();
                 
-                // Debug logging to see the actual response structure
-                console.log(`Page ${page} response structure:`, JSON.stringify(data).slice(0, 500) + '...');
+                // Debug logging
+                console.log(`Response from ${searchTerm ? 'search' : 'most-recent'} endpoint:`, 
+                            JSON.stringify(data).slice(0, 300) + '...');
                 
-                // Extract snippets from the response - handle different potential structures
+                // Extract snippets based on verified paths from our tests
                 let pageSnippets = [];
                 
-                if (data.pageProps?.snippets?.data && Array.isArray(data.pageProps.snippets.data)) {
-                    // This is the correct path based on the actual structure
+                if (searchTerm && data.pageProps?.searchResults?.data && Array.isArray(data.pageProps.searchResults.data)) {
+                    // Path for search results - confirmed by our tests
+                    pageSnippets = data.pageProps.searchResults.data;
+                    console.log(`Found ${pageSnippets.length} search results for "${searchTerm}"`);
+                } else if (!searchTerm && data.pageProps?.snippets?.data && Array.isArray(data.pageProps.snippets.data)) {
+                    // Path for most-recent snippets - confirmed by our tests
                     pageSnippets = data.pageProps.snippets.data;
-                } else if (data.pageProps?.snippets) {
-                    // If snippets are directly in pageProps.snippets and it's an array
-                    pageSnippets = Array.isArray(data.pageProps.snippets) ? data.pageProps.snippets : [];
-                } else if (data.pageProps?.data?.snippets) {
-                    // If snippets are nested in data
-                    pageSnippets = data.pageProps.data.snippets;
-                } else if (Array.isArray(data.pageProps)) {
-                    // If pageProps itself is an array
-                    pageSnippets = data.pageProps;
-                } else if (Array.isArray(data)) {
-                    // If data itself is an array
-                    pageSnippets = data;
+                    console.log(`Found ${pageSnippets.length} snippets on page ${page}`);
                 } else {
-                    // Last resort: look for any array in the response
-                    for (const key in data) {
-                        if (Array.isArray(data[key])) {
-                            pageSnippets = data[key];
-                            break;
-                        }
-                        
-                        if (data[key] && typeof data[key] === 'object') {
-                            for (const nestedKey in data[key]) {
-                                if (Array.isArray(data[key][nestedKey])) {
-                                    pageSnippets = data[key][nestedKey];
-                                    break;
-                                }
-                                
-                                // Add one more level of nesting check
-                                if (data[key][nestedKey] && typeof data[key][nestedKey] === 'object') {
-                                    for (const deepNestedKey in data[key][nestedKey]) {
-                                        if (Array.isArray(data[key][nestedKey][deepNestedKey])) {
-                                            pageSnippets = data[key][nestedKey][deepNestedKey];
-                                            break;
-                                        }
-                                    }
+                    // Handle edge cases or API changes
+                    console.warn("Expected data structure not found, trying fallback paths");
+                    
+                    // Fallback options
+                    if (data.pageProps?.snippets && Array.isArray(data.pageProps.snippets)) {
+                        pageSnippets = data.pageProps.snippets;
+                    } else if (data.pageProps?.searchResults && Array.isArray(data.pageProps.searchResults)) {
+                        pageSnippets = data.pageProps.searchResults;
+                    } else {
+                        // Last resort: Look for any array that might contain snippets
+                        const findArrays = (obj) => {
+                            if (!obj || typeof obj !== 'object') return null;
+                            
+                            for (const key in obj) {
+                                if (Array.isArray(obj[key]) && obj[key].length > 0 && obj[key][0].title) {
+                                    return obj[key];
+                                } else if (typeof obj[key] === 'object') {
+                                    const result = findArrays(obj[key]);
+                                    if (result) return result;
                                 }
                             }
+                            return null;
+                        };
+                        
+                        const anyArray = findArrays(data);
+                        if (anyArray) {
+                            pageSnippets = anyArray;
+                            console.log("Found snippets in unexpected location", pageSnippets.length);
                         }
                     }
                 }
                 
-                if (!Array.isArray(pageSnippets)) {
-                    console.error(`Could not find snippets array in page ${page} response`, data);
-                    pageSnippets = [];
+                if (!pageSnippets.length) {
+                    console.error(`Could not find snippets in response`, data);
                 }
-                
-                console.log(`Found ${pageSnippets.length} snippets on page ${page}`);
-                
-                // Add to our collection
-                if (pageSnippets.length > 0) {
-                    allSnippets = [...allSnippets, ...pageSnippets];
-                }
-                
-                loadedPages++;
-                loadingTextElement.textContent = `Loading snippets... (${loadedPages}/${totalPages})`;
                 
                 return pageSnippets;
             } catch (error) {
-                console.error(`Error fetching page ${page}:`, error);
+                console.error(`Error fetching snippets:`, error);
                 throw error;
             }
+        }
+
+        function applyTagFilters() {
+            if (selectedTags.size === 0) {
+                // No tag filters, show all snippets from search
+                filteredSnippets = [...allSnippets];
+                displaySnippets(filteredSnippets);
+                return;
+            }
+            
+            filteredSnippets = allSnippets.filter(snippet => {
+                return snippet.tags && Array.from(selectedTags).every(tag => snippet.tags.includes(tag));
+            });
+            
+            displaySnippets(filteredSnippets);
         }
 
         function populateTagsFilter() {
@@ -565,45 +451,10 @@
                 element.classList.add('selected');
             }
             
-            // Re-apply filters
-            applyFilters();
-        }
-
-        function searchSnippets() {
-            applyFilters();
-        }
-
-        function applyFilters() {
-            const searchTerm = document.getElementById('search').value.toLowerCase();
-            
-            filteredSnippets = allSnippets.filter(snippet => {
-                // Apply search term filter
-                let matchesSearch = true;
-                if (searchTerm.trim()) {
-                    const terms = searchTerm.split(' ').filter(term => term.length > 0);
-                    
-                    const title = snippet.title?.toLowerCase() || '';
-                    const content = (snippet.code || snippet.content || '').toLowerCase();
-                    const tags = snippet.tags ? snippet.tags.join(' ').toLowerCase() : '';
-                    
-                    matchesSearch = terms.every(term => 
-                        title.includes(term) || 
-                        content.includes(term) || 
-                        tags.includes(term)
-                    );
-                }
-                
-                // Apply tags filter
-                let matchesTags = true;
-                if (selectedTags.size > 0) {
-                    matchesTags = selectedTags.size === 0 || 
-                        (snippet.tags && Array.from(selectedTags).every(tag => snippet.tags.includes(tag)));
-                }
-                
-                return matchesSearch && matchesTags;
-            });
-            
-            displaySnippets(filteredSnippets);
+            // Re-apply filters if we have already done a search
+            if (isInitialized) {
+                applyTagFilters();
+            }
         }
 
         function clearSearch() {
@@ -615,8 +466,8 @@
                 el.classList.remove('selected');
             });
             
-            filteredSnippets = [...allSnippets];
-            displaySnippets(filteredSnippets);
+            // Go back to initial state
+            fetchInitialSnippets();
         }
 
         function displaySnippets(snippets) {
